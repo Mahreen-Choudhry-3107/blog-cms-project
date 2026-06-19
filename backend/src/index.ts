@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { initDb } from "./db";
 import { createApp } from "./app";
 

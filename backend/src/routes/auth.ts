@@ -1,11 +1,11 @@
 import { Router, Response } from "express";
 import bcrypt from "bcryptjs";
-import { queryOne, run, getLastInsertId } from "../db";
+import { queryOne, runReturning } from "../db";
 import { generateToken, authMiddleware, AuthRequest } from "../middleware/auth";
 
 const router = Router();
 
-router.post("/register", (req: AuthRequest, res: Response): void => {
+router.post("/register", async (req: AuthRequest, res: Response): Promise<void> => {
   const { username, password } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: "Username and password are required" });
@@ -16,28 +16,33 @@ router.post("/register", (req: AuthRequest, res: Response): void => {
     return;
   }
 
-  const existing = queryOne<{ id: number }>("SELECT id FROM users WHERE username = ?", [username]);
+  const existing = await queryOne<{ id: number }>(
+    "SELECT id FROM users WHERE username = $1",
+    [username]
+  );
   if (existing) {
     res.status(409).json({ error: "Username already taken" });
     return;
   }
 
   const hashed = bcrypt.hashSync(password, 10);
-  run("INSERT INTO users (username, password) VALUES (?, ?)", [username, hashed]);
-  const id = getLastInsertId();
+  const { id } = await runReturning<{ id: number }>(
+    "INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id",
+    [username, hashed]
+  );
   const token = generateToken(id, username);
   res.status(201).json({ token, user: { id, username } });
 });
 
-router.post("/login", (req: AuthRequest, res: Response): void => {
+router.post("/login", async (req: AuthRequest, res: Response): Promise<void> => {
   const { username, password } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: "Username and password are required" });
     return;
   }
 
-  const user = queryOne<{ id: number; username: string; password: string }>(
-    "SELECT id, username, password FROM users WHERE username = ?",
+  const user = await queryOne<{ id: number; username: string; password: string }>(
+    "SELECT id, username, password FROM users WHERE username = $1",
     [username]
   );
   if (!user || !bcrypt.compareSync(password, user.password)) {

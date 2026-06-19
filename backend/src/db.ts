@@ -1,94 +1,70 @@
-import initSqlJs, { Database as SqlJsDatabase } from "sql.js";
-import fs from "fs";
-import path from "path";
+import { Pool } from "@neondatabase/serverless";
 
-const DB_PATH = path.join(__dirname, "..", "data", "blog.db");
-
-let db: SqlJsDatabase;
-
-export function getLastInsertId(): number {
-  const result = db.exec("SELECT last_insert_rowid() as id");
-  return result[0].values[0][0] as number;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required");
 }
 
-export function queryAll<T = Record<string, unknown>>(
+export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+export async function queryAll<T = Record<string, unknown>>(
   sql: string,
   params: unknown[] = []
-): T[] {
-  const stmt = db.prepare(sql);
-  if (params.length > 0) stmt.bind(params);
-  const rows: T[] = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject() as T);
-  }
-  stmt.free();
-  return rows;
+): Promise<T[]> {
+  const { rows } = await pool.query(sql, params);
+  return rows as T[];
 }
 
-export function queryOne<T = Record<string, unknown>>(
+export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   params: unknown[] = []
-): T | undefined {
-  const rows = queryAll<T>(sql, params);
-  return rows.length > 0 ? rows[0] : undefined;
+): Promise<T | undefined> {
+  const { rows } = await pool.query(sql, params);
+  return rows.length > 0 ? (rows[0] as T) : undefined;
 }
 
-export function run(sql: string, params: unknown[] = []): void {
-  db.run(sql, params);
-  saveDb();
+export async function run(
+  sql: string,
+  params: unknown[] = []
+): Promise<{ rowCount: number }> {
+  const result = await pool.query(sql, params);
+  return { rowCount: result.rowCount ?? 0 };
+}
+
+export async function runReturning<T = Record<string, unknown>>(
+  sql: string,
+  params: unknown[] = []
+): Promise<T> {
+  const { rows } = await pool.query(sql, params);
+  return rows[0] as T;
 }
 
 export async function initDb(): Promise<void> {
-  const dataDir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  const SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    const buffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(buffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run("PRAGMA journal_mode=MEMORY");
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMP DEFAULT NOW()
     )
   `);
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
       excerpt TEXT DEFAULT '',
-      user_id INTEGER NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
     )
   `);
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS comments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       content TEXT NOT NULL,
-      post_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT NOW()
     )
   `);
-  saveDb();
-}
-
-export function saveDb(): void {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
 }
