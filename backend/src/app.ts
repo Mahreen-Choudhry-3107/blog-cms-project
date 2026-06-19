@@ -9,10 +9,10 @@ export function createApp() {
   app.use(cors());
   app.use(express.json());
 
-  app.use("/api/auth", authRoutes);
-  app.use("/api/posts", postRoutes);
+  app.use("/auth", authRoutes);
+  app.use("/posts", postRoutes);
 
-  app.get("/api/health", (_req, res) => {
+  app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
 
